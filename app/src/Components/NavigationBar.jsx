@@ -20,17 +20,35 @@ export default function NavigationBar({ currentPage, setCurrentPage }) {
                         <li>
                             <button 
                                 onClick={() => setCurrentPage('home')}
-                                className={`text-gray-600 hover:text-blue-600 ${currentPage === 'home' ? 'text-blue-600 font-semibold' : ''}`}
+                                className={`
+                                    nav-link relative text-sm font-medium transition-all duration-200 ease-in-out
+                                    ${currentPage === 'home' 
+                                        ? 'text-blue-600' 
+                                        : 'text-gray-700 hover:text-blue-600'
+                                    }
+                                `}
                             >
                                 Dashboard
+                                {currentPage === 'home' && (
+                                    <span className="absolute -bottom-1 left-0 w-full h-0.5 bg-blue-600 rounded-full"></span>
+                                )}
                             </button>
                         </li>
                         <li>
                             <button 
                                 onClick={() => setCurrentPage('about')}
-                                className={`text-gray-600 hover:text-blue-600 ${currentPage === 'about' ? 'text-blue-600 font-semibold' : ''}`}
+                                className={`
+                                    nav-link relative text-sm font-medium transition-all duration-200 ease-in-out
+                                    ${currentPage === 'about' 
+                                        ? 'text-blue-600' 
+                                        : 'text-gray-700 hover:text-blue-600'
+                                    }
+                                `}
                             >
                                 About Us
+                                {currentPage === 'about' && (
+                                    <span className="absolute -bottom-1 left-0 w-full h-0.5 bg-blue-600 rounded-full"></span>
+                                )}
                             </button>
                         </li>
                     </ul>

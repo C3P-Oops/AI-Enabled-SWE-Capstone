@@ -70,3 +70,52 @@ button:focus-visible {
     color: #747bff;
   }
 }
+
+/* Navigation Link Styles - Override default button styling */
+.nav-link {
+  /* Reset button styles */
+  background: none !important;
+  border: none !important;
+  padding: 0.5rem 0 !important;
+  margin: 0 !important;
+  
+  /* Link-like appearance */
+  font-family: inherit !important;
+  cursor: pointer !important;
+  text-decoration: none !important;
+  
+  /* Remove default button effects */
+  box-shadow: none !important;
+  outline: none !important;
+  border-radius: 0 !important;
+  
+  /* Smooth transitions */
+  transition: color 0.2s ease-in-out !important;
+}
+
+.nav-link:hover {
+  background: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.nav-link:focus,
+.nav-link:focus-visible {
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: 2px !important;
+  border-radius: 4px !important;
+}
+
+/* Active state underline animation */
+.nav-link span {
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
