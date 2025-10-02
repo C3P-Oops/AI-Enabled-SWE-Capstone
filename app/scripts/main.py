@@ -40,7 +40,25 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
 # --- Database Setup ---
+
+# Configure CORS to allow requests from the React frontend.
+origins = [
+    "http://localhost:3000", # The address of your React frontend
+    "localhost:3000"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,       # Allow requests from these origins
+    allow_credentials=True,    # Allow cookies
+    allow_methods=["*"],       # Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],       # Allow all headers
+)
 
 # Define the database URL for a local SQLite database file.
 SQLALCHEMY_DATABASE_URL = "sqlite:///./app/recruitment_app.db"
