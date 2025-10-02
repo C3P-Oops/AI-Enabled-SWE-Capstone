@@ -1,10 +1,12 @@
+from __future__ import annotations
 import pytest
+from contextlib import asynccontextmanager
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 import sys
 import os
+import msvcrt  # For file locking on Windows
 
 # Add the current directory to the path to allow for imports
 # This is necessary for the `if __name__ == "__main__"` block to work correctly
@@ -13,7 +15,6 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 # --- FastAPI Application Code ---
 # The provided application code is placed here directly to create a single, executable file.
 
-from __future__ import annotations
 
 import uvicorn
 from datetime import datetime
@@ -21,7 +22,7 @@ from enum import Enum
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, status, Depends
-from pantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from sqlalchemy import (
     create_engine as create_prod_engine,
     Column,
@@ -38,7 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship,
 # --- Database Setup ---
 
 # Define the production database URL. This will be overridden for tests.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./recruitment_app_test.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///app/recruitment_app.db"
 
 # Create the SQLAlchemy engine.
 prod_engine = create_prod_engine(
@@ -240,18 +241,25 @@ def get_db():
         db.close()
 
 
+# --- Lifespan Event Handler ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events."""
+    # Startup: Create all database tables
+    # This will bind to the production engine, which is fine.
+    # Tests will use their own engine and setup.
+    Base.metadata.create_all(bind=prod_engine)
+    yield
+    # Shutdown: Add any cleanup code here if needed
+
+
 # --- Application Setup ---
 app = FastAPI(
     title="Hiring System API",
     description="An API for managing a recruitment process, using FastAPI and SQLAlchemy.",
     version="2.0.0",
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-def on_startup():
-    """Creates all database tables on application startup."""
-    Base.metadata.create_all(bind=prod_engine)
 
 
 # --- Enums for CHECK Constraints ---
@@ -418,7 +426,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> sqa_User:
     """
     Retrieves a single user by their ID.
     """
-    db_user = db.query(sqa_User).get(user_id)
+    db_user = db.get(sqa_User, user_id)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found")
     return db_user
@@ -429,7 +437,7 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     """
     Updates an existing user's details.
     """
-    db_user = db.query(sqa_User).get(user_id)
+    db_user = db.get(sqa_User, user_id)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found")
 
@@ -456,7 +464,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     Deletes a user. Fails if the user is linked to jobs, feedback, or
     decisions due to RESTRICT constraints.
     """
-    db_user = db.query(sqa_User).get(user_id)
+    db_user = db.get(sqa_User, user_id)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found")
     try:
@@ -504,7 +512,7 @@ def get_candidate(candidate_id: int, db: Session = Depends(get_db)) -> sqa_Candi
     """
     Retrieves a single candidate by their ID.
     """
-    db_candidate = db.query(sqa_Candidate).get(candidate_id)
+    db_candidate = db.get(sqa_Candidate, candidate_id)
     if not db_candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {candidate_id} not found")
     return db_candidate
@@ -515,7 +523,7 @@ def update_candidate(candidate_id: int, candidate_update: CandidateUpdate, db: S
     """
     Updates an existing candidate's details.
     """
-    db_candidate = db.query(sqa_Candidate).get(candidate_id)
+    db_candidate = db.get(sqa_Candidate, candidate_id)
     if not db_candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {candidate_id} not found")
 
@@ -542,7 +550,7 @@ def delete_candidate(candidate_id: int, db: Session = Depends(get_db)):
     Deletes a candidate and all their associated data (applications, documents, etc.)
     due to CASCADE constraints.
     """
-    db_candidate = db.query(sqa_Candidate).get(candidate_id)
+    db_candidate = db.get(sqa_Candidate, candidate_id)
     if not db_candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {candidate_id} not found")
     db.delete(db_candidate)
@@ -557,7 +565,7 @@ def create_job(job: JobCreate, db: Session = Depends(get_db)) -> sqa_Job:
     """
     Creates a new job posting. The creating user must exist.
     """
-    creator = db.query(sqa_User).get(job.created_by_user_id)
+    creator = db.get(sqa_User, job.created_by_user_id)
     if not creator:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -584,7 +592,7 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> sqa_Job:
     """
     Retrieves a single job by its ID.
     """
-    db_job = db.query(sqa_Job).get(job_id)
+    db_job = db.get(sqa_Job, job_id)
     if not db_job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with ID {job_id} not found")
     return db_job
@@ -598,9 +606,9 @@ def create_application(application: ApplicationCreate, db: Session = Depends(get
     Creates a new job application. A candidate can only apply for a given job once.
     """
     # Check if foreign keys exist
-    if not db.query(sqa_Job).get(application.job_id):
+    if not db.get(sqa_Job, application.job_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with ID {application.job_id} not found")
-    if not db.query(sqa_Candidate).get(application.candidate_id):
+    if not db.get(sqa_Candidate, application.candidate_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {application.candidate_id} not found")
 
     new_application = sqa_Application(**application.model_dump())
@@ -630,7 +638,7 @@ def get_application(application_id: int, db: Session = Depends(get_db)) -> sqa_A
     """
     Retrieves a single application by its ID.
     """
-    db_application = db.query(sqa_Application).get(application_id)
+    db_application = db.get(sqa_Application, application_id)
     if not db_application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
     return db_application
@@ -641,7 +649,7 @@ def update_application(application_id: int, app_update: ApplicationUpdate, db: S
     """
     Updates the status of an application.
     """
-    db_application = db.query(sqa_Application).get(application_id)
+    db_application = db.get(sqa_Application, application_id)
     if not db_application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
 
@@ -660,7 +668,7 @@ def delete_application(application_id: int, db: Session = Depends(get_db)):
     Deletes an application and all its associated data (documents, interviews, etc.)
     due to CASCADE constraints.
     """
-    db_application = db.query(sqa_Application).get(application_id)
+    db_application = db.get(sqa_Application, application_id)
     if not db_application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
 
@@ -678,49 +686,71 @@ def root():
 
 # --- Pytest Test Suite ---
 
-# --- Test Database Setup ---
-# Use an in-memory SQLite database for testing
-TEST_SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+import typing
 
-test_engine = create_engine(
-    TEST_SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,  # Use StaticPool for in-memory DB with TestClient
-)
-
-# Create a new sessionmaker for the test database
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-
-# --- Dependency Override ---
-# Override the `get_db` dependency to use the test database session
-def override_get_db():
-    """Dependency to provide a test database session."""
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-# Apply the override to the FastAPI app
-app.dependency_overrides[get_db] = override_get_db
-
-
-# --- Pytest Fixture for Test Client and Database ---
 @pytest.fixture(scope="function")
-def client():
+def client() -> typing.Generator[TestClient, None, None]:
     """
-    Pytest fixture to set up and tear down the database for each test function.
-    It creates all tables before a test and drops them afterwards, ensuring
-    a clean state for every test case.
+    Pytest fixture to set up and tear down an isolated test database for each test function.
+
+    This fixture creates a new SQLite database file for each test, ensuring complete
+    isolation. It applies the SQLAlchemy schema, overrides the app's `get_db`
+    dependency to use this test database, yields a `TestClient` to the test,
+    and then meticulously cleans up by removing the database file and clearing
+    the dependency override.
     """
-    # Create all tables in the in-memory database before each test
-    Base.metadata.create_all(bind=test_engine)
-    # Yield a TestClient instance
+    import uuid
+    import time
+    
+    # Create a unique database file name for each test
+    unique_id = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    TEST_DB_FILE = f"./test_recruitment_{unique_id}.db"
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{TEST_DB_FILE}"
+
+    # 1. Create a test database engine
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+    )
+
+    # 2. Create tables based on the SQLAlchemy models
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    # 3. Define and apply the dependency override
+    def override_get_db():
+        try:
+            db = TestingSessionLocal()
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # 4. Yield the TestClient for the test to use
     with TestClient(app) as c:
         yield c
-    # Drop all tables after each test to ensure isolation
-    Base.metadata.drop_all(bind=test_engine)
+
+    # 5. Teardown: Clean up everything after the test is done
+    app.dependency_overrides.clear()
+    
+    # Close all connections to the database
+    engine.dispose()
+    
+    # Wait a bit and then try to remove the file
+    time.sleep(0.1)
+    
+    if os.path.exists(TEST_DB_FILE):
+        try:
+            os.remove(TEST_DB_FILE)
+        except Exception as e:
+            print(f"Error while removing the file {TEST_DB_FILE}: {e}")
+            # Try again after a short delay
+            try:
+                time.sleep(0.5)
+                os.remove(TEST_DB_FILE)
+            except Exception as e2:
+                print(f"Second attempt to remove {TEST_DB_FILE} failed: {e2}")
 
 
 # --- Helper functions for tests ---
@@ -768,7 +798,7 @@ def test_root_endpoint(client: TestClient):
     assert response.status_code == 200
     assert response.json() == {"message": "Welcome to the Hiring System API. Visit /docs for documentation."}
 
-# --- User Endpoint Tests ---
+# --- User Endpoint Happy Path Tests ---
 
 def test_create_user_happy_path(client: TestClient):
     """Test successful creation of a new user."""
@@ -834,8 +864,68 @@ def test_delete_user_happy_path(client: TestClient):
     response_get = client.get(f"/users/{user_id}")
     assert response_get.status_code == 404
 
+# --- User Endpoint Edge Case and Error Tests ---
 
-# --- Candidate Endpoint Tests ---
+def test_create_user_duplicate_email(client: TestClient):
+    """Test creating a user with an email that already exists."""
+    email = "duplicate@example.com"
+    create_test_user(client, email=email)
+    user_data = {"first_name": "Another", "last_name": "User", "email": email, "role": "HR Manager"}
+    response = client.post("/users/", json=user_data)
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
+
+@pytest.mark.parametrize("invalid_payload, error_detail", [
+    ({"last_name": "Doe", "email": "a@b.com", "role": "HR Manager"}, "Field required"),
+    ({"first_name": "", "last_name": "Doe", "email": "a@b.com", "role": "HR Manager"}, "String should have at least 1 character"),
+    ({"first_name": "Jane", "last_name": "Doe", "email": "not-an-email", "role": "HR Manager"}, "value is not a valid email address"),
+    ({"first_name": "Jane", "last_name": "Doe", "email": "a@b.com", "role": "Invalid Role"}, "Input should be 'HR Manager'"),
+])
+def test_create_user_invalid_data(client: TestClient, invalid_payload, error_detail):
+    """Test creating a user with various invalid inputs."""
+    response = client.post("/users/", json=invalid_payload)
+    assert response.status_code == 422
+    assert error_detail in str(response.json()["detail"])
+
+def test_get_nonexistent_user(client: TestClient):
+    """Test retrieving a user that does not exist."""
+    response = client.get("/users/999")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User with ID 999 not found"
+
+def test_update_nonexistent_user(client: TestClient):
+    """Test updating a user that does not exist."""
+    response = client.put("/users/999", json={"first_name": "Ghost"})
+    assert response.status_code == 404
+
+def test_update_user_email_conflict(client: TestClient):
+    """Test updating a user's email to one that is already in use."""
+    user1 = create_test_user(client, email="user1@example.com")
+    user2 = create_test_user(client, email="user2@example.com")
+    response = client.put(f"/users/{user2['user_id']}", json={"email": user1["email"]})
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
+
+def test_delete_nonexistent_user(client: TestClient):
+    """Test deleting a user that does not exist."""
+    response = client.delete("/users/999")
+    assert response.status_code == 404
+
+def test_delete_user_with_dependencies_fails(client: TestClient):
+    """Test that deleting a user with a job dependency fails due to RESTRICT constraint."""
+    user = create_test_user(client)
+    create_test_job(client, user["user_id"])
+    response = client.delete(f"/users/{user['user_id']}")
+    assert response.status_code == 409
+    assert "referenced by other records" in response.json()["detail"]
+
+def test_get_all_users_empty(client: TestClient):
+    """Test retrieving users when none exist."""
+    response = client.get("/users/")
+    assert response.status_code == 200
+    assert response.json() == []
+
+# --- Candidate Endpoint Happy Path Tests ---
 
 def test_create_candidate_happy_path(client: TestClient):
     """Test successful creation of a new candidate."""
@@ -899,8 +989,58 @@ def test_delete_candidate_happy_path(client: TestClient):
     response_get = client.get(f"/candidates/{candidate_id}")
     assert response_get.status_code == 404
 
+# --- Candidate Endpoint Edge Case and Error Tests ---
 
-# --- Job Endpoint Tests ---
+def test_create_candidate_duplicate_email(client: TestClient):
+    """Test creating a candidate with a duplicate email fails."""
+    email = "taken@example.com"
+    create_test_candidate(client, email=email)
+    candidate_data = {"first_name": "Duplicate", "last_name": "Person", "email": email}
+    response = client.post("/candidates/", json=candidate_data)
+    assert response.status_code == 409
+
+def test_get_nonexistent_candidate(client: TestClient):
+    """Test retrieving a candidate that does not exist."""
+    response = client.get("/candidates/999")
+    assert response.status_code == 404
+
+def test_update_nonexistent_candidate(client: TestClient):
+    """Test updating a candidate that does not exist."""
+    response = client.put("/candidates/999", json={"first_name": "Ghost"})
+    assert response.status_code == 404
+
+def test_update_candidate_email_conflict(client: TestClient):
+    """Test updating a candidate's email to one that is already in use."""
+    candidate1 = create_test_candidate(client, email="c1@example.com")
+    candidate2 = create_test_candidate(client, email="c2@example.com")
+    response = client.put(f"/candidates/{candidate2['candidate_id']}", json={"email": candidate1["email"]})
+    assert response.status_code == 409
+
+def test_delete_nonexistent_candidate(client: TestClient):
+    """Test deleting a candidate that does not exist."""
+    response = client.delete("/candidates/999")
+    assert response.status_code == 404
+
+def test_delete_candidate_cascades_to_application(client: TestClient):
+    """Test that deleting a candidate also deletes their applications via CASCADE."""
+    user = create_test_user(client)
+    job = create_test_job(client, user["user_id"])
+    candidate = create_test_candidate(client)
+    
+    app_data = {"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]}
+    app_response = client.post("/applications/", json=app_data)
+    assert app_response.status_code == 201
+    application_id = app_response.json()["application_id"]
+
+    # Delete the candidate
+    delete_response = client.delete(f"/candidates/{candidate['candidate_id']}")
+    assert delete_response.status_code == 204
+
+    # Verify the application is also gone
+    get_app_response = client.get(f"/applications/{application_id}")
+    assert get_app_response.status_code == 404
+
+# --- Job Endpoint Happy Path Tests ---
 
 def test_create_job_happy_path(client: TestClient):
     """Test successful creation of a new job."""
@@ -944,8 +1084,37 @@ def test_get_job_by_id_happy_path(client: TestClient):
     assert data["job_id"] == job_id
     assert data["title"] == job["title"]
 
+# --- Job Endpoint Edge Case and Error Tests ---
 
-# --- Application Endpoint Tests ---
+def test_create_job_with_nonexistent_user(client: TestClient):
+    """Test creating a job with a user ID that does not exist."""
+    job_data = {
+        "title": "Ghost Job",
+        "description": "This job has no creator.",
+        "created_by_user_id": 999
+    }
+    response = client.post("/jobs/", json=job_data)
+    assert response.status_code == 404
+    assert "User with ID 999 not found" in response.json()["detail"]
+
+def test_create_job_with_invalid_title(client: TestClient):
+    """Test creating a job with a title that is too short."""
+    user = create_test_user(client)
+    job_data = {
+        "title": "J",
+        "description": "Short title job.",
+        "created_by_user_id": user["user_id"]
+    }
+    response = client.post("/jobs/", json=job_data)
+    assert response.status_code == 422
+    assert "String should have at least 3 characters" in str(response.json()["detail"])
+
+def test_get_nonexistent_job(client: TestClient):
+    """Test retrieving a job that does not exist."""
+    response = client.get("/jobs/999")
+    assert response.status_code == 404
+
+# --- Application Endpoint Happy Path Tests ---
 
 def test_create_application_happy_path(client: TestClient):
     """Test successful creation of a new application."""
@@ -1027,11 +1196,89 @@ def test_delete_application_happy_path(client: TestClient):
     response_get = client.get(f"/applications/{application_id}")
     assert response_get.status_code == 404
 
+# --- Application Endpoint Edge Case and Error Tests ---
+
+def test_create_application_duplicate(client: TestClient):
+    """Test that a candidate cannot apply for the same job twice."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    application_data = {"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]}
+    
+    # First application should succeed
+    response1 = client.post("/applications/", json=application_data)
+    assert response1.status_code == 201
+
+    # Second application should fail
+    response2 = client.post("/applications/", json=application_data)
+    assert response2.status_code == 409
+    assert "has already applied" in response2.json()["detail"]
+
+def test_create_application_with_nonexistent_job(client: TestClient):
+    """Test creating an application for a job that does not exist."""
+    candidate = create_test_candidate(client)
+    application_data = {"job_id": 999, "candidate_id": candidate["candidate_id"]}
+    response = client.post("/applications/", json=application_data)
+    assert response.status_code == 404
+    assert "Job with ID 999 not found" in response.json()["detail"]
+
+def test_create_application_with_nonexistent_candidate(client: TestClient):
+    """Test creating an application for a candidate that does not exist."""
+    user = create_test_user(client)
+    job = create_test_job(client, user["user_id"])
+    application_data = {"job_id": job["job_id"], "candidate_id": 999}
+    response = client.post("/applications/", json=application_data)
+    assert response.status_code == 404
+    assert "Candidate with ID 999 not found" in response.json()["detail"]
+
+def test_get_nonexistent_application(client: TestClient):
+    """Test retrieving an application that does not exist."""
+    response = client.get("/applications/999")
+    assert response.status_code == 404
+
+def test_update_nonexistent_application(client: TestClient):
+    """Test updating an application that does not exist."""
+    response = client.put("/applications/999", json={"status": "hired"})
+    assert response.status_code == 404
+
+def test_update_application_invalid_status(client: TestClient):
+    """Test updating an application with an invalid status enum value."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    app_response = client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]})
+    application_id = app_response.json()["application_id"]
+
+    response = client.put(f"/applications/{application_id}", json={"status": "invalid_status"})
+    assert response.status_code == 422
+    assert "Input should be 'applied', 'screening'" in str(response.json()["detail"])
+
+def test_delete_nonexistent_application(client: TestClient):
+    """Test deleting an application that does not exist."""
+    response = client.delete("/applications/999")
+    assert response.status_code == 404
+
+
+# --- File Locking Functions ---
+
+def lock_file(file_path):
+    """Lock the file to prevent concurrent access on Windows."""
+    lock_file = open(file_path, 'a')
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+    return lock_file
+
+def unlock_file(lock_file):
+    """Unlock the file after operations are complete on Windows."""
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    lock_file.close()
+
 
 if __name__ == "__main__":
     """
-    This block allows the script to be run directly, executing the pytest tests.
+    This block allows the script to be run directly, starting the Uvicorn server
+    for the main application or executing the pytest tests.
     """
+    # To run the tests, execute this file with pytest: `pytest test_file_name.py`
     # We pass the filename to pytest.main to ensure it runs tests from this file.
     # The '-v' flag is for verbose output.
     sys.exit(pytest.main([__file__, "-v"]))
