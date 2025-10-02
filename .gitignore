@@ -321,5 +321,6 @@ pip-selfcheck.json
 
 # Custom
 Notes.txt
+artifacts/*
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,pycharm,dotenv,venv,python
