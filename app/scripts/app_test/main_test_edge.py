@@ -1,23 +1,18 @@
-"""
-A complete FastAPI and SQLAlchemy application for a Hiring/Recruitment System.
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+import sys
+import os
 
-This application provides a full CRUD (Create, Read, Update, Delete) API
-for managing a recruitment process. It uses SQLAlchemy ORM to interact with a
-SQLite database, replacing the original in-memory data structures.
+# Add the current directory to the path to allow for imports
+# This is necessary for the `if __name__ == "__main__"` block to work correctly
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-Key Features:
-- FastAPI for building a high-performance API.
-- Pydantic for data validation, serialization, and settings management.
-- SQLAlchemy 2.0 ORM for database interaction with a SQLite backend.
-- Dependency Injection for managing database sessions.
-- A complete set of CRUD endpoints for all major resources: Users, Jobs,
-  Candidates, Skills, Applications, Documents, Interviews, Feedback, and Decisions.
-- Proper handling of database constraints like UNIQUE, FOREIGN KEY, and
-  ON DELETE actions (CASCADE, SET NULL, RESTRICT) through SQLAlchemy and
-  error handling.
-- Comprehensive docstrings for all models and endpoints.
-- A runnable main block using Uvicorn for easy startup.
-"""
+# --- FastAPI Application Code ---
+# The provided application code is placed here directly to create a single, executable file.
+
 from __future__ import annotations
 
 import uvicorn
@@ -28,7 +23,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, status, Depends
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from sqlalchemy import (
-    create_engine,
+    create_engine as create_prod_engine,
     Column,
     ForeignKey,
     Integer,
@@ -38,39 +33,20 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
 # --- Database Setup ---
 
-# Configure CORS to allow requests from the React frontend.
-origins = [
-    "http://localhost:3000", # The address of your React frontend
-    "localhost:3000",
-    "localhost:5174"
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,       # Allow requests from these origins
-    allow_credentials=True,    # Allow cookies
-    allow_methods=["*"],       # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],       # Allow all headers
-)
-
-# Define the database URL for a local SQLite database file.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./app/recruitment_app.db"
+# Define the production database URL. This will be overridden for tests.
+SQLALCHEMY_DATABASE_URL = "sqlite:///./recruitment_app_test.db"
 
 # Create the SQLAlchemy engine.
-engine = create_engine(
+prod_engine = create_prod_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 
 # Create a SessionLocal class. Each instance will be a database session.
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=prod_engine)
 
 
 # --- SQLAlchemy ORM Models ---
@@ -275,7 +251,7 @@ app = FastAPI(
 @app.on_event("startup")
 def on_startup():
     """Creates all database tables on application startup."""
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=prod_engine)
 
 
 # --- Enums for CHECK Constraints ---
@@ -700,10 +676,563 @@ def root():
     return {"message": "Welcome to the Hiring System API. Visit /docs for documentation."}
 
 
-# --- Runnable Main Block ---
+# --- Pytest Test Suite ---
+
+# --- Test Database Setup ---
+# Use an in-memory SQLite database for testing
+TEST_SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+
+test_engine = create_engine(
+    TEST_SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,  # Use StaticPool for in-memory DB with TestClient
+)
+
+# Create a new sessionmaker for the test database
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+# --- Dependency Override ---
+# Override the `get_db` dependency to use the test database session
+def override_get_db():
+    """Dependency to provide a test database session."""
+    try:
+        db = TestingSessionLocal()
+        yield db
+    finally:
+        db.close()
+
+# Apply the override to the FastAPI app
+app.dependency_overrides[get_db] = override_get_db
+
+
+# --- Pytest Fixture for Test Client and Database ---
+@pytest.fixture(scope="function")
+def client():
+    """
+    Pytest fixture to set up and tear down the database for each test function.
+    It creates all tables before a test and drops them afterwards, ensuring
+    a clean state for every test case.
+    """
+    # Create all tables in the in-memory database before each test
+    Base.metadata.create_all(bind=test_engine)
+    # Yield a TestClient instance
+    with TestClient(app) as c:
+        yield c
+    # Drop all tables after each test to ensure isolation
+    Base.metadata.drop_all(bind=test_engine)
+
+
+# --- Helper functions for tests ---
+def create_test_user(client: TestClient, email="test.user@example.com", role="HR Manager"):
+    """Helper to create a user for dependency purposes."""
+    user_data = {
+        "first_name": "Test",
+        "last_name": "User",
+        "email": email,
+        "role": role
+    }
+    response = client.post("/users/", json=user_data)
+    assert response.status_code == 201
+    return response.json()
+
+def create_test_candidate(client: TestClient, email="test.candidate@example.com"):
+    """Helper to create a candidate for dependency purposes."""
+    candidate_data = {
+        "first_name": "Test",
+        "last_name": "Candidate",
+        "email": email,
+        "phone": "1234567890"
+    }
+    response = client.post("/candidates/", json=candidate_data)
+    assert response.status_code == 201
+    return response.json()
+
+def create_test_job(client: TestClient, user_id: int):
+    """Helper to create a job for dependency purposes."""
+    job_data = {
+        "title": "Software Engineer",
+        "description": "Develop amazing software.",
+        "created_by_user_id": user_id
+    }
+    response = client.post("/jobs/", json=job_data)
+    assert response.status_code == 201
+    return response.json()
+
+
+# --- Test Cases ---
+
+def test_root_endpoint(client: TestClient):
+    """Test the root welcome endpoint."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"message": "Welcome to the Hiring System API. Visit /docs for documentation."}
+
+# --- User Endpoint Happy Path Tests ---
+
+def test_create_user_happy_path(client: TestClient):
+    """Test successful creation of a new user."""
+    user_data = {
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "email": "jane.doe@example.com",
+        "role": "Hiring Manager"
+    }
+    response = client.post("/users/", json=user_data)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["email"] == user_data["email"]
+    assert data["first_name"] == user_data["first_name"]
+    assert "user_id" in data
+
+def test_get_all_users_happy_path(client: TestClient):
+    """Test retrieving a list of all users."""
+    create_test_user(client, "user1@example.com")
+    create_test_user(client, "user2@example.com")
+
+    response = client.get("/users/")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["email"] == "user1@example.com"
+    assert data[1]["email"] == "user2@example.com"
+
+def test_get_user_by_id_happy_path(client: TestClient):
+    """Test retrieving a single user by their ID."""
+    user = create_test_user(client)
+    user_id = user["user_id"]
+
+    response = client.get(f"/users/{user_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["user_id"] == user_id
+    assert data["email"] == user["email"]
+
+def test_update_user_happy_path(client: TestClient):
+    """Test successfully updating a user's details."""
+    user = create_test_user(client)
+    user_id = user["user_id"]
+    update_data = {"first_name": "John", "role": "Project Manager"}
+
+    response = client.put(f"/users/{user_id}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["user_id"] == user_id
+    assert data["first_name"] == "John"
+    assert data["role"] == "Project Manager"
+    assert data["email"] == user["email"]  # Email should not have changed
+
+def test_delete_user_happy_path(client: TestClient):
+    """Test successfully deleting a user who has no dependencies."""
+    user = create_test_user(client)
+    user_id = user["user_id"]
+
+    response = client.delete(f"/users/{user_id}")
+    assert response.status_code == 204
+
+    # Verify user is gone
+    response_get = client.get(f"/users/{user_id}")
+    assert response_get.status_code == 404
+
+# --- User Endpoint Edge Case and Error Tests ---
+
+def test_create_user_duplicate_email(client: TestClient):
+    """Test creating a user with an email that already exists."""
+    email = "duplicate@example.com"
+    create_test_user(client, email=email)
+    user_data = {"first_name": "Another", "last_name": "User", "email": email, "role": "HR Manager"}
+    response = client.post("/users/", json=user_data)
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
+
+@pytest.mark.parametrize("invalid_payload, error_detail", [
+    ({"last_name": "Doe", "email": "a@b.com", "role": "HR Manager"}, "Field required"),
+    ({"first_name": "", "last_name": "Doe", "email": "a@b.com", "role": "HR Manager"}, "String should have at least 1 character"),
+    ({"first_name": "Jane", "last_name": "Doe", "email": "not-an-email", "role": "HR Manager"}, "value is not a valid email address"),
+    ({"first_name": "Jane", "last_name": "Doe", "email": "a@b.com", "role": "Invalid Role"}, "Input should be 'HR Manager'"),
+])
+def test_create_user_invalid_data(client: TestClient, invalid_payload, error_detail):
+    """Test creating a user with various invalid inputs."""
+    response = client.post("/users/", json=invalid_payload)
+    assert response.status_code == 422
+    assert error_detail in str(response.json()["detail"])
+
+def test_get_nonexistent_user(client: TestClient):
+    """Test retrieving a user that does not exist."""
+    response = client.get("/users/999")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User with ID 999 not found"
+
+def test_update_nonexistent_user(client: TestClient):
+    """Test updating a user that does not exist."""
+    response = client.put("/users/999", json={"first_name": "Ghost"})
+    assert response.status_code == 404
+
+def test_update_user_email_conflict(client: TestClient):
+    """Test updating a user's email to one that is already in use."""
+    user1 = create_test_user(client, email="user1@example.com")
+    user2 = create_test_user(client, email="user2@example.com")
+    response = client.put(f"/users/{user2['user_id']}", json={"email": user1["email"]})
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
+
+def test_delete_nonexistent_user(client: TestClient):
+    """Test deleting a user that does not exist."""
+    response = client.delete("/users/999")
+    assert response.status_code == 404
+
+def test_delete_user_with_dependencies_fails(client: TestClient):
+    """Test that deleting a user with a job dependency fails due to RESTRICT constraint."""
+    user = create_test_user(client)
+    create_test_job(client, user["user_id"])
+    response = client.delete(f"/users/{user['user_id']}")
+    assert response.status_code == 409
+    assert "referenced by other records" in response.json()["detail"]
+
+def test_get_all_users_empty(client: TestClient):
+    """Test retrieving users when none exist."""
+    response = client.get("/users/")
+    assert response.status_code == 200
+    assert response.json() == []
+
+# --- Candidate Endpoint Happy Path Tests ---
+
+def test_create_candidate_happy_path(client: TestClient):
+    """Test successful creation of a new candidate."""
+    candidate_data = {
+        "first_name": "Alice",
+        "last_name": "Smith",
+        "email": "alice.smith@example.com",
+        "phone": "555-1234"
+    }
+    response = client.post("/candidates/", json=candidate_data)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["email"] == candidate_data["email"]
+    assert data["phone"] == candidate_data["phone"]
+    assert "candidate_id" in data
+
+def test_get_all_candidates_happy_path(client: TestClient):
+    """Test retrieving a list of all candidates."""
+    create_test_candidate(client, "candidate1@example.com")
+    create_test_candidate(client, "candidate2@example.com")
+
+    response = client.get("/candidates/")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["email"] == "candidate1@example.com"
+
+def test_get_candidate_by_id_happy_path(client: TestClient):
+    """Test retrieving a single candidate by their ID."""
+    candidate = create_test_candidate(client)
+    candidate_id = candidate["candidate_id"]
+
+    response = client.get(f"/candidates/{candidate_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["candidate_id"] == candidate_id
+    assert data["email"] == candidate["email"]
+
+def test_update_candidate_happy_path(client: TestClient):
+    """Test successfully updating a candidate's details."""
+    candidate = create_test_candidate(client)
+    candidate_id = candidate["candidate_id"]
+    update_data = {"phone": "555-5678", "last_name": "Jones"}
+
+    response = client.put(f"/candidates/{candidate_id}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["candidate_id"] == candidate_id
+    assert data["phone"] == "555-5678"
+    assert data["last_name"] == "Jones"
+
+def test_delete_candidate_happy_path(client: TestClient):
+    """Test successfully deleting a candidate."""
+    candidate = create_test_candidate(client)
+    candidate_id = candidate["candidate_id"]
+
+    response = client.delete(f"/candidates/{candidate_id}")
+    assert response.status_code == 204
+
+    # Verify candidate is gone
+    response_get = client.get(f"/candidates/{candidate_id}")
+    assert response_get.status_code == 404
+
+# --- Candidate Endpoint Edge Case and Error Tests ---
+
+def test_create_candidate_duplicate_email(client: TestClient):
+    """Test creating a candidate with a duplicate email fails."""
+    email = "taken@example.com"
+    create_test_candidate(client, email=email)
+    candidate_data = {"first_name": "Duplicate", "last_name": "Person", "email": email}
+    response = client.post("/candidates/", json=candidate_data)
+    assert response.status_code == 409
+
+def test_get_nonexistent_candidate(client: TestClient):
+    """Test retrieving a candidate that does not exist."""
+    response = client.get("/candidates/999")
+    assert response.status_code == 404
+
+def test_update_nonexistent_candidate(client: TestClient):
+    """Test updating a candidate that does not exist."""
+    response = client.put("/candidates/999", json={"first_name": "Ghost"})
+    assert response.status_code == 404
+
+def test_update_candidate_email_conflict(client: TestClient):
+    """Test updating a candidate's email to one that is already in use."""
+    candidate1 = create_test_candidate(client, email="c1@example.com")
+    candidate2 = create_test_candidate(client, email="c2@example.com")
+    response = client.put(f"/candidates/{candidate2['candidate_id']}", json={"email": candidate1["email"]})
+    assert response.status_code == 409
+
+def test_delete_nonexistent_candidate(client: TestClient):
+    """Test deleting a candidate that does not exist."""
+    response = client.delete("/candidates/999")
+    assert response.status_code == 404
+
+def test_delete_candidate_cascades_to_application(client: TestClient):
+    """Test that deleting a candidate also deletes their applications via CASCADE."""
+    user = create_test_user(client)
+    job = create_test_job(client, user["user_id"])
+    candidate = create_test_candidate(client)
+    
+    app_data = {"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]}
+    app_response = client.post("/applications/", json=app_data)
+    assert app_response.status_code == 201
+    application_id = app_response.json()["application_id"]
+
+    # Delete the candidate
+    delete_response = client.delete(f"/candidates/{candidate['candidate_id']}")
+    assert delete_response.status_code == 204
+
+    # Verify the application is also gone
+    get_app_response = client.get(f"/applications/{application_id}")
+    assert get_app_response.status_code == 404
+
+# --- Job Endpoint Happy Path Tests ---
+
+def test_create_job_happy_path(client: TestClient):
+    """Test successful creation of a new job."""
+    user = create_test_user(client)
+    job_data = {
+        "title": "Senior Python Developer",
+        "description": "Looking for an expert in Python and FastAPI.",
+        "created_by_user_id": user["user_id"]
+    }
+    response = client.post("/jobs/", json=job_data)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["title"] == job_data["title"]
+    assert data["created_by_user_id"] == user["user_id"]
+    assert "job_id" in data
+
+def test_get_all_jobs_happy_path(client: TestClient):
+    """Test retrieving a list of all jobs."""
+    user = create_test_user(client)
+    response1 = client.post("/jobs/", json={"title": "Job 1", "description": "Desc 1", "created_by_user_id": user["user_id"]})
+    response2 = client.post("/jobs/", json={"title": "Job 2", "description": "Desc 2", "created_by_user_id": user["user_id"]})
+    assert response1.status_code == 201
+    assert response2.status_code == 201
+
+    response = client.get("/jobs/")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["title"] == "Job 1"
+    assert data[1]["title"] == "Job 2"
+
+def test_get_job_by_id_happy_path(client: TestClient):
+    """Test retrieving a single job by its ID."""
+    user = create_test_user(client)
+    job = create_test_job(client, user["user_id"])
+    job_id = job["job_id"]
+
+    response = client.get(f"/jobs/{job_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["job_id"] == job_id
+    assert data["title"] == job["title"]
+
+# --- Job Endpoint Edge Case and Error Tests ---
+
+def test_create_job_with_nonexistent_user(client: TestClient):
+    """Test creating a job with a user ID that does not exist."""
+    job_data = {
+        "title": "Ghost Job",
+        "description": "This job has no creator.",
+        "created_by_user_id": 999
+    }
+    response = client.post("/jobs/", json=job_data)
+    assert response.status_code == 404
+    assert "User with ID 999 not found" in response.json()["detail"]
+
+def test_create_job_with_invalid_title(client: TestClient):
+    """Test creating a job with a title that is too short."""
+    user = create_test_user(client)
+    job_data = {
+        "title": "J",
+        "description": "Short title job.",
+        "created_by_user_id": user["user_id"]
+    }
+    response = client.post("/jobs/", json=job_data)
+    assert response.status_code == 422
+    assert "String should have at least 3 characters" in str(response.json()["detail"])
+
+def test_get_nonexistent_job(client: TestClient):
+    """Test retrieving a job that does not exist."""
+    response = client.get("/jobs/999")
+    assert response.status_code == 404
+
+# --- Application Endpoint Happy Path Tests ---
+
+def test_create_application_happy_path(client: TestClient):
+    """Test successful creation of a new application."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+
+    application_data = {
+        "job_id": job["job_id"],
+        "candidate_id": candidate["candidate_id"],
+        "status": "applied"
+    }
+    response = client.post("/applications/", json=application_data)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["job_id"] == job["job_id"]
+    assert data["candidate_id"] == candidate["candidate_id"]
+    assert data["status"] == "applied"
+    assert "application_id" in data
+
+def test_get_all_applications_happy_path(client: TestClient):
+    """Test retrieving a list of all applications."""
+    user = create_test_user(client)
+    candidate1 = create_test_candidate(client, "c1@example.com")
+    candidate2 = create_test_candidate(client, "c2@example.com")
+    job = create_test_job(client, user["user_id"])
+
+    client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate1["candidate_id"]})
+    client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate2["candidate_id"]})
+
+    response = client.get("/applications/")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["candidate_id"] == candidate1["candidate_id"]
+    assert data[1]["candidate_id"] == candidate2["candidate_id"]
+
+def test_get_application_by_id_happy_path(client: TestClient):
+    """Test retrieving a single application by its ID."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    app_response = client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]})
+    application_id = app_response.json()["application_id"]
+
+    response = client.get(f"/applications/{application_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["application_id"] == application_id
+    assert data["job_id"] == job["job_id"]
+
+def test_update_application_happy_path(client: TestClient):
+    """Test successfully updating an application's status."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    app_response = client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]})
+    application_id = app_response.json()["application_id"]
+
+    update_data = {"status": "screening"}
+    response = client.put(f"/applications/{application_id}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["application_id"] == application_id
+    assert data["status"] == "screening"
+
+def test_delete_application_happy_path(client: TestClient):
+    """Test successfully deleting an application."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    app_response = client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]})
+    application_id = app_response.json()["application_id"]
+
+    response = client.delete(f"/applications/{application_id}")
+    assert response.status_code == 204
+
+    # Verify application is gone
+    response_get = client.get(f"/applications/{application_id}")
+    assert response_get.status_code == 404
+
+# --- Application Endpoint Edge Case and Error Tests ---
+
+def test_create_application_duplicate(client: TestClient):
+    """Test that a candidate cannot apply for the same job twice."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    application_data = {"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]}
+    
+    # First application should succeed
+    response1 = client.post("/applications/", json=application_data)
+    assert response1.status_code == 201
+
+    # Second application should fail
+    response2 = client.post("/applications/", json=application_data)
+    assert response2.status_code == 409
+    assert "has already applied" in response2.json()["detail"]
+
+def test_create_application_with_nonexistent_job(client: TestClient):
+    """Test creating an application for a job that does not exist."""
+    candidate = create_test_candidate(client)
+    application_data = {"job_id": 999, "candidate_id": candidate["candidate_id"]}
+    response = client.post("/applications/", json=application_data)
+    assert response.status_code == 404
+    assert "Job with ID 999 not found" in response.json()["detail"]
+
+def test_create_application_with_nonexistent_candidate(client: TestClient):
+    """Test creating an application for a candidate that does not exist."""
+    user = create_test_user(client)
+    job = create_test_job(client, user["user_id"])
+    application_data = {"job_id": job["job_id"], "candidate_id": 999}
+    response = client.post("/applications/", json=application_data)
+    assert response.status_code == 404
+    assert "Candidate with ID 999 not found" in response.json()["detail"]
+
+def test_get_nonexistent_application(client: TestClient):
+    """Test retrieving an application that does not exist."""
+    response = client.get("/applications/999")
+    assert response.status_code == 404
+
+def test_update_nonexistent_application(client: TestClient):
+    """Test updating an application that does not exist."""
+    response = client.put("/applications/999", json={"status": "hired"})
+    assert response.status_code == 404
+
+def test_update_application_invalid_status(client: TestClient):
+    """Test updating an application with an invalid status enum value."""
+    user = create_test_user(client)
+    candidate = create_test_candidate(client)
+    job = create_test_job(client, user["user_id"])
+    app_response = client.post("/applications/", json={"job_id": job["job_id"], "candidate_id": candidate["candidate_id"]})
+    application_id = app_response.json()["application_id"]
+
+    response = client.put(f"/applications/{application_id}", json={"status": "invalid_status"})
+    assert response.status_code == 422
+    assert "Input should be 'applied', 'screening'" in str(response.json()["detail"])
+
+def test_delete_nonexistent_application(client: TestClient):
+    """Test deleting an application that does not exist."""
+    response = client.delete("/applications/999")
+    assert response.status_code == 404
+
+
 if __name__ == "__main__":
     """
-    This block allows the script to be run directly, starting the Uvicorn server.
-    It's configured to run on port 8081 and be accessible from any network interface.
+    This block allows the script to be run directly, executing the pytest tests.
     """
-    uvicorn.run(app, host="0.0.0.0", port=8081)
+    # We pass the filename to pytest.main to ensure it runs tests from this file.
+    # The '-v' flag is for verbose output.
+    sys.exit(pytest.main([__file__, "-v"]))
