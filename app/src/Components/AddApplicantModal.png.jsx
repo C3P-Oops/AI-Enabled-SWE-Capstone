@@ -22,6 +22,18 @@ export default function AddApplicantModal({ jobTitle = "Senior UX Designer", onC
             />
           </div>
           <div>
+            <label htmlFor="lastName" className="sr-only">
+              Last Name
+            </label>
+            <input
+              type="text"
+              id="lastName"
+              name="lastName"
+              placeholder="Last Name"
+              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+            />
+          </div>
+          <div>
             <label htmlFor="email" className="sr-only">
               Email
             </label>

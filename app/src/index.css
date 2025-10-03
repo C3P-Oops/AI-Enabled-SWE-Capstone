@@ -61,6 +61,7 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;
@@ -99,12 +100,12 @@ button:focus-visible {
   transform: none !important;
 }
 
-.nav-link:focus,
+/* .nav-link:focus,
 .nav-link:focus-visible {
   outline: 2px solid #3b82f6 !important;
   outline-offset: 2px !important;
   border-radius: 4px !important;
-}
+} */
 
 /* Active state underline animation */
 .nav-link span {

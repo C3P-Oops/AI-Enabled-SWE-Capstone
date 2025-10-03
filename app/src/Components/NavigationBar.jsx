@@ -30,7 +30,7 @@ export default function NavigationBar({ currentPage, setCurrentPage }) {
                             >
                                 Dashboard
                                 {currentPage === 'home' && (
-                                    <span className="absolute -bottom-1 left-0 w-full h-0.5 bg-blue-600 rounded-full"></span>
+                                    <span className="absolute -bottom-1 left-0 w-full h-0.5 bg-blue-600"></span>
                                 )}
                             </button>
                         </li>
