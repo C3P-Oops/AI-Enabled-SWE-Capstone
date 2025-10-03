@@ -55,7 +55,7 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-# --- SQLAlchemy ORM Models ---
+#### --- SQLAlchemy ORM Models ---
 
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy ORM models."""
@@ -297,7 +297,7 @@ class Decision(str, Enum):
     ON_HOLD = 'on_hold'
 
 
-# --- Pydantic Models (Schemas) ---
+#### --- Pydantic Models (Schemas) ---
 
 # User Schemas
 class UserBase(BaseModel):
