@@ -685,7 +685,7 @@ def root():
 
 
 # --- Pytest Test Suite ---
-
+# TODO: Isolated DB creation
 import typing
 
 @pytest.fixture(scope="function")
@@ -752,7 +752,7 @@ def client() -> typing.Generator[TestClient, None, None]:
             except Exception as e2:
                 print(f"Second attempt to remove {TEST_DB_FILE} failed: {e2}")
 
-
+# TODO Helper functions and testing
 # --- Helper functions for tests ---
 def create_test_user(client: TestClient, email="test.user@example.com", role="HR Manager"):
     """Helper to create a user for dependency purposes."""
