@@ -605,6 +605,24 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> sqa_Job:
     return db_job
 
 
+@app.put("/jobs/{job_id}", response_model=Job, tags=["Jobs"])
+def update_job(job_id: int, job_update: JobUpdate, db: Session = Depends(get_db)) -> sqa_Job:
+    """
+    Updates an existing job's details.
+    """
+    db_job = db.query(sqa_Job).get(job_id)
+    if not db_job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with ID {job_id} not found")
+
+    update_data = job_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_job, key, value)
+
+    db.commit()
+    db.refresh(db_job)
+    return db_job
+
+
 # --- Application Endpoints ---
 
 @app.post("/applications/", response_model=Application, status_code=status.HTTP_201_CREATED, tags=["Applications"])
