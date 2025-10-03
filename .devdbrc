@@ -1,6 +1,10 @@
 [
   {
     "type": "sqlite",
-    "path": "c:\\Repos\\Capstone\\app\\recruitment_app.db"
+    "path": "C:\\Users\\labadmin\\Documents\\CohortCaptstone\\AI-Enabled-SWE-Capstone\\app\\recruitment_app.db"
+  },
+  {
+    "type": "sqlite",
+    "path": "c:\\Users\\labadmin\\Documents\\CohortCaptstone\\AI-Enabled-SWE-Capstone\\app\\recruitment_app.db"
   }
 ]

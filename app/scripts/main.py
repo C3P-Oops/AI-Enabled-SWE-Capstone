@@ -26,6 +26,7 @@ from enum import Enum
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from sqlalchemy import (
     create_engine,
@@ -36,6 +37,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     text,
+    Enum as SQLAEnum,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
@@ -43,7 +45,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship,
 # --- Database Setup ---
 
 # Define the database URL for a local SQLite database file.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./app/recruitment_app.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///../recruitment_app.db"
 
 # Create the SQLAlchemy engine.
 engine = create_engine(
@@ -52,6 +54,42 @@ engine = create_engine(
 
 # Create a SessionLocal class. Each instance will be a database session.
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+# --- Enums for CHECK Constraints ---
+
+class UserRole(str, Enum):
+    HR_MANAGER = 'HR Manager'
+    RECRUITMENT_COORDINATOR = 'Recruitment Coordinator'
+    HIRING_MANAGER = 'Hiring Manager'
+    PROJECT_MANAGER = 'Project Manager'
+
+
+class JobStatus(str, Enum):
+    OPEN = 'open'
+    DRAFT = 'draft'
+    CLOSED = 'closed'
+    ON_HOLD = 'on_hold'
+    CANCELLED = 'cancelled'
+
+
+class ApplicationStatus(str, Enum):
+    APPLIED = 'applied'
+    SCREENING = 'screening'
+    INTERVIEWING = 'interviewing'
+    OFFER_EXTENDED = 'offer_extended'
+    HIRED = 'hired'
+    REJECTED = 'rejected'
+    WITHDRAWN = 'withdrawn'
+
+
+class Decision(str, Enum):
+    MOVE_TO_NEXT_STAGE = 'move_to_next_stage'
+    OFFER = 'offer'
+    NO_OFFER = 'no_offer'
+    HIRE = 'hire'
+    REJECT = 'reject'
+    ON_HOLD = 'on_hold'
 
 
 # --- SQLAlchemy ORM Models ---
@@ -127,7 +165,7 @@ class sqa_Application(Base):
     application_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.job_id", ondelete="CASCADE"))
     candidate_id: Mapped[int] = mapped_column(ForeignKey("candidates.candidate_id", ondelete="CASCADE"))
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="applied")
+    status: Mapped[ApplicationStatus] = mapped_column(SQLAEnum(ApplicationStatus), nullable=False, default=ApplicationStatus.APPLIED)
     applied_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(
         server_default=text("CURRENT_TIMESTAMP"), onupdate=datetime.utcnow
@@ -154,6 +192,10 @@ class sqa_Job(Base):
     job_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text)
+    department: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[JobStatus] = mapped_column(SQLAEnum(JobStatus), nullable=False, default=JobStatus.OPEN)
+    hiring_manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.user_id", ondelete="SET NULL"))
     created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(
@@ -161,6 +203,9 @@ class sqa_Job(Base):
     )
     creator: Mapped["sqa_User"] = relationship(
         "sqa_User", back_populates="jobs_created", foreign_keys=[created_by_user_id]
+    )
+    hiring_manager: Mapped["sqa_User | None"] = relationship(
+        "sqa_User", foreign_keys=[hiring_manager_id]
     )
     applications: Mapped[list["sqa_Application"]] = relationship(
         "sqa_Application", back_populates="job", cascade="all, delete-orphan"
@@ -252,39 +297,19 @@ app = FastAPI(
     version="2.0.0",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.on_event("startup")
 def on_startup():
     """Creates all database tables on application startup."""
     Base.metadata.create_all(bind=engine)
-
-
-# --- Enums for CHECK Constraints ---
-
-class UserRole(str, Enum):
-    HR_MANAGER = 'HR Manager'
-    RECRUITMENT_COORDINATOR = 'Recruitment Coordinator'
-    HIRING_MANAGER = 'Hiring Manager'
-    PROJECT_MANAGER = 'Project Manager'
-
-
-class ApplicationStatus(str, Enum):
-    APPLIED = 'applied'
-    SCREENING = 'screening'
-    INTERVIEWING = 'interviewing'
-    OFFER_EXTENDED = 'offer_extended'
-    HIRED = 'hired'
-    REJECTED = 'rejected'
-    WITHDRAWN = 'withdrawn'
-
-
-class Decision(str, Enum):
-    MOVE_TO_NEXT_STAGE = 'move_to_next_stage'
-    OFFER = 'offer'
-    NO_OFFER = 'no_offer'
-    HIRE = 'hire'
-    REJECT = 'reject'
-    ON_HOLD = 'on_hold'
 
 
 # --- Pydantic Models (Schemas) ---
@@ -347,7 +372,11 @@ class Candidate(CandidateBase):
 class JobBase(BaseModel):
     title: str = Field(..., min_length=3)
     description: str
+    department: Optional[str] = None
+    location: Optional[str] = None
+    status: JobStatus = JobStatus.OPEN
     created_by_user_id: int
+    hiring_manager_id: Optional[int] = None
 
 
 class JobCreate(JobBase):
@@ -357,6 +386,10 @@ class JobCreate(JobBase):
 class JobUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=3)
     description: Optional[str] = None
+    department: Optional[str] = None
+    location: Optional[str] = None
+    status: Optional[JobStatus] = None
+    hiring_manager_id: Optional[int] = None
 
 
 class Job(JobBase):

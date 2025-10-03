@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 // Icon components (as they would be in a real app, but defined here for self-containment)
 const UsersIcon = (props) => (
@@ -76,6 +76,41 @@ const jobsData = [
 ];
 
 export default function Dashboard({ onJobClick }) {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchJobs = async() => {
+      try {
+        const response = await fetch('http://localhost:8081/jobs/');
+
+        if(!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const jobsData = await response.json();
+        console.log(jobsData);
+        setJobs(jobsData);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error fetching jobs:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJobs();
+  }, []);
+
+  if (loading) {
+    return <div className="p-8">Loading jobs...</div>;
+  }
+
+  // Handle error state
+  if (error) {
+    return <div className="p-8 text-red-600">Error: {error}</div>;
+  }
+
   return (
     <div className="bg-slate-100 min-h-screen flex justify-center font-sans">
       <div className="w-full max-w-7xl bg-white rounded-2xl shadow-lg flex min-h-[800px]">
@@ -104,32 +139,45 @@ export default function Dashboard({ onJobClick }) {
           <div className="mt-4 bg-white rounded-xl border border-slate-200">
             <h2 className="text-xl font-bold text-slate-800 p-6">Current Job Postings</h2>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
+              <table className="w-full text-sm text-left table-fixed">
+                <colgroup>
+                  <col className="w-1/4" />
+                  <col className="w-1/2" />
+                  <col className="w-1/4" />
+                </colgroup>
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Job Title</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Department</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Applicants</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider w-1/4">Job Title</th>
+                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider w-1/2">Description</th>
+                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider w-1/4">Created By</th>
+                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider w-1/4">Department</th>
+                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider w-1/4">Location</th>
+                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider w-1/4">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {jobsData.map((job, index) => (
+                  {jobs.map((job, index) => (
                     <tr 
                       key={index} 
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                       onClick={() => onJobClick && onJobClick(job.title)}
                     >
                       <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">{job.title}</td>
+                      <td className="px-6 py-4 text-slate-600 max-w-xs">
+                        <div className="truncate" title={job.description}>
+                          {job.description}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.created_by_user_id}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.department}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.location}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <StatusBadge status={job.status} />
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.applicants}</td>
+                      {/* <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.applicants}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-slate-600 font-medium">
                         {job.actions.length > 2 ? `${job.actions[0]} | ${job.actions[1]}` : (job.actions.length === 1 ? job.actions[0] : '')}
-                      </td>
+                      </td> */}
                     </tr>
                   ))}
                 </tbody>
