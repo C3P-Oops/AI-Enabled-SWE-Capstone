@@ -44,26 +44,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship,
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
 # --- Database Setup ---
 
-# Configure CORS to allow requests from the React frontend.
-origins = [
-    "http://localhost:3000", # The address of your React frontend
-    "localhost:3000",
-    "localhost:5174"
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,       # Allow requests from these origins
-    allow_credentials=True,    # Allow cookies
-    allow_methods=["*"],       # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],       # Allow all headers
-)
-
 # Define the database URL for a local SQLite database file.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./app/recruitment_app.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./recruitment_app.db"
 
 # Create the SQLAlchemy engine.
 engine = create_engine(
@@ -281,6 +265,25 @@ app = FastAPI(
     description="An API for managing a recruitment process, using FastAPI and SQLAlchemy.",
     version="2.0.0",
     lifespan=lifespan,
+)
+
+# Configure CORS to allow requests from the React frontend.
+origins = [
+    "http://localhost:3000",  # Create React App default
+    "http://localhost:5173",  # Vite default
+    "http://localhost:5174",  # Vite alternative
+    "localhost:3000",
+    "localhost:5173", 
+    "localhost:5174",
+    "*"  # Allow all origins for development (remove in production)
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,       # Allow requests from these origins
+    allow_credentials=True,      # Allow cookies
+    allow_methods=["*"],         # Allow all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],         # Allow all headers
 )
 
 

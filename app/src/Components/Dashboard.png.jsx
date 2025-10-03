@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+
+// API configuration
+const API_BASE_URL = 'http://localhost:8081';
 
 // Icon components (as they would be in a real app, but defined here for self-containment)
 const UsersIcon = (props) => (
@@ -59,23 +62,206 @@ const StatusBadge = ({ status }) => {
       return <span className={`${baseClasses} bg-blue-100 text-blue-800`}>{status}</span>;
     case 'closed':
       return <span className={`${baseClasses} bg-red-100 text-red-800`}>{status}</span>;
+    case 'interviewing':
+      return <span className={`${baseClasses} bg-orange-100 text-orange-800`}>{status}</span>;
+    case 'screening':
+      return <span className={`${baseClasses} bg-yellow-100 text-yellow-800`}>{status}</span>;
+    case 'pending':
+      return <span className={`${baseClasses} bg-purple-100 text-purple-800`}>{status}</span>;
+    case 'paused':
+      return <span className={`${baseClasses} bg-gray-100 text-gray-800`}>{status}</span>;
+    case 'filled':
+      return <span className={`${baseClasses} bg-emerald-100 text-emerald-800`}>{status}</span>;
     default:
-      return <span className="text-gray-600 text-sm capitalize">{status}</span>;
+      return <span className={`${baseClasses} bg-slate-100 text-slate-800`}>{status}</span>;
   }
 };
 
-const jobsData = [
-    { title: 'Software Engineer', department: 'New York, NY', status: 'Open', applicants: 85, actions: ['View', 'Edit'] },
-    { title: 'Engineering', department: 'New Francisco, CA', status: 'Open', applicants: 0, actions: ['0'] },
-    { title: 'Product Manager', department: 'Design', status: 'Draft', applicants: 2, actions: [] },
-    { title: 'UX Designer', department: 'London, UK', status: 'Interviewing', applicants: 32, actions: ['View', 'Edit'] },
-    { title: 'HR Specialist', department: 'Austin, TX', status: 'Closed', applicants: 110, actions: ['110'] },
-    { title: 'Project Lead', department: 'Engineering', status: 'Open', applicants: 55, actions: ['View', 'Edit'] },
-    { title: 'Marketing Coordinator', department: 'Berlin Germany', status: 'Open', applicants: 55, actions: ['View', 'Edit'] },
-    { title: 'Sydney. AU', department: 'Offer Extended', status: 'Open', applicants: 40, actions: ['View', 'Edit'] },
-];
+// API utility functions
+const fetchJobs = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/jobs/`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching jobs:', error);
+    throw error;
+  }
+};
+
+const fetchApplicationsForJob = async (jobId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/applications/`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const applications = await response.json();
+    return applications.filter(app => app.job_id === jobId);
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    return [];
+  }
+};
+
+// Transform backend data to match frontend expectations
+const transformJobData = (jobs, applicationsData) => {
+  return jobs.map(job => {
+    const applications = applicationsData[job.job_id] || [];
+    const applicantCount = applications.length;
+    
+    // Map job titles to departments based on common patterns
+    let department = 'Not specified';
+    const title = job.title.toLowerCase();
+    
+    if (title.includes('engineer') || title.includes('developer') || title.includes('devops') || title.includes('qa')) {
+      department = 'Engineering';
+    } else if (title.includes('product manager') || title.includes('product')) {
+      department = 'Product';
+    } else if (title.includes('designer') || title.includes('ux') || title.includes('ui')) {
+      department = 'Design';
+    } else if (title.includes('data scientist') || title.includes('data') || title.includes('analyst')) {
+      department = 'Data & Analytics';
+    } else if (title.includes('marketing') || title.includes('sales')) {
+      department = 'Marketing & Sales';
+    } else if (title.includes('hr') || title.includes('human resources')) {
+      department = 'Human Resources';
+    } else if (title.includes('security') || title.includes('cybersecurity')) {
+      department = 'Security';
+    } else if (title.includes('writer') || title.includes('technical writer')) {
+      department = 'Documentation';
+    } else if (title.includes('architect') || title.includes('cloud')) {
+      department = 'Architecture';
+    }
+    
+    // Determine status based on job data or default to 'Open'
+    let status = 'Open';
+    if (applicantCount === 0) {
+      status = 'Open';
+    } else if (applications.some(app => app.status === 'interviewing')) {
+      status = 'Interviewing';
+    }
+
+    return {
+      job_id: job.job_id,
+      title: job.title,
+      department: department,
+      status: status,
+      applicants: applicantCount,
+      actions: applicantCount > 0 ? ['View', 'Edit'] : ['View']
+    };
+  });
+};
+
+// Helper function to highlight search terms
+const highlightSearchTerm = (text, searchTerm) => {
+  if (!searchTerm.trim()) return text;
+  
+  const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+  
+  return parts.map((part, index) => 
+    regex.test(part) ? (
+      <mark key={index} className="bg-yellow-200 text-yellow-900 px-1 rounded">
+        {part}
+      </mark>
+    ) : part
+  );
+};
 
 export default function Dashboard({ onJobClick }) {
+  const [jobs, setJobs] = useState([]);
+  const [filteredJobs, setFilteredJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  const searchInputRef = useRef(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Fetch jobs and applications
+        const jobsData = await fetchJobs();
+        
+        // Fetch applications for each job
+        const applicationsData = {};
+        await Promise.all(
+          jobsData.map(async (job) => {
+            applicationsData[job.job_id] = await fetchApplicationsForJob(job.job_id);
+          })
+        );
+        
+        // Transform data for the UI
+        const transformedJobs = transformJobData(jobsData, applicationsData);
+        setJobs(transformedJobs);
+        setFilteredJobs(transformedJobs); // Initialize filtered jobs
+      } catch (err) {
+        setError(err.message);
+        console.error('Failed to load dashboard data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Filter jobs based on search term
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setFilteredJobs(jobs);
+    } else {
+      const filtered = jobs.filter(job => 
+        job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        job.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        job.status.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      setFilteredJobs(filtered);
+    }
+    // Reset to first page when search changes
+    setCurrentPage(1);
+  }, [searchTerm, jobs]);
+
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredJobs.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentJobs = filteredJobs.slice(startIndex, endIndex);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
+  const handlePrevPage = () => {
+    setCurrentPage(prev => Math.max(prev - 1, 1));
+  };
+
+  const handleNextPage = () => {
+    setCurrentPage(prev => Math.min(prev + 1, totalPages));
+  };
+
+  // Add keyboard shortcut to focus search (Ctrl+K or Cmd+K)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   return (
     <div className="bg-slate-100 min-h-screen flex justify-center font-sans">
       <div className="w-full max-w-7xl bg-white rounded-2xl shadow-lg flex min-h-[800px]">
@@ -90,51 +276,202 @@ export default function Dashboard({ onJobClick }) {
               </div>
               <input
                 type="text"
-                placeholder="Search for jobs..."
-                className="w-full bg-white border border-slate-300 rounded-lg py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                ref={searchInputRef}
+                placeholder="Search jobs by title, description, or status... (Ctrl+K)"
+                value={searchTerm}
+                onChange={handleSearchChange}
+                style={{ 
+                  color: '#1f2937', 
+                  backgroundColor: 'white',
+                  fontSize: '14px'
+                }}
+                className="w-full bg-white border border-slate-300 rounded-lg py-2 pl-10 pr-4 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
-            {/* <button className="flex items-center text-white font-semibold px-4 py-2 rounded-lg shadow-sm transition-colors">
-              <PlusIcon className="mr-2" />
-              Create New Job Post
-            </button> */}
           </div>
 
           {/* Job Postings Table */}
-          <div className="mt-4 bg-white rounded-xl border border-slate-200">
-            <h2 className="text-xl font-bold text-slate-800 p-6">Current Job Postings</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Job Title</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Department</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Applicants</th>
-                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {jobsData.map((job, index) => (
-                    <tr 
-                      key={index} 
-                      className="hover:bg-slate-50 cursor-pointer transition-colors"
-                      onClick={() => onJobClick && onJobClick(job.title)}
-                    >
-                      <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">{job.title}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.department}</td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <StatusBadge status={job.status} />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.applicants}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-slate-600 font-medium">
-                        {job.actions.length > 2 ? `${job.actions[0]} | ${job.actions[1]}` : (job.actions.length === 1 ? job.actions[0] : '')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="mt-2 bg-white rounded-xl border border-slate-200">
+            <div className="p-6 border-b border-slate-200">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-bold text-slate-800">Current Job Postings</h2>
+                {searchTerm && (
+                  <div className="text-sm text-slate-600">
+                    {filteredJobs.length} of {jobs.length} jobs match "{searchTerm}"
+                  </div>
+                )}
+                {!searchTerm && filteredJobs.length > 0 && (
+                  <div className="text-sm text-slate-600">
+                    Showing {startIndex + 1}-{Math.min(endIndex, filteredJobs.length)} of {filteredJobs.length} jobs
+                  </div>
+                )}
+              </div>
             </div>
+            
+            {loading && (
+              <div className="flex justify-center items-center p-8">
+                <div className="text-slate-600">Loading jobs...</div>
+              </div>
+            )}
+            
+            {error && (
+              <div className="mx-6 mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+                <strong>Error:</strong> {error}
+                <div className="text-sm mt-2">
+                  Make sure the backend server is running on http://localhost:8081
+                </div>
+              </div>
+            )}
+            
+            {!loading && !error && jobs.length === 0 && (
+              <div className="p-8 text-center text-slate-600">
+                No jobs found. Create your first job posting!
+              </div>
+            )}
+
+            {!loading && !error && jobs.length > 0 && filteredJobs.length === 0 && searchTerm && (
+              <div className="p-8 text-center text-slate-600">
+                <div className="flex flex-col items-center">
+                  <SearchIcon className="w-12 h-12 text-slate-300 mb-4" />
+                  <p className="text-lg font-medium">No jobs match your search</p>
+                  <p className="text-sm">Try searching for different keywords or clear your search to see all jobs.</p>
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Clear Search
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {!loading && !error && filteredJobs.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Job Title</th>
+                      <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Department</th>
+                      <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                      <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Applicants</th>
+                      <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {currentJobs.map((job, index) => (
+                      <tr 
+                        key={job.job_id || index} 
+                        className="hover:bg-slate-50 cursor-pointer transition-colors"
+                        onClick={() => {
+                          console.log('Dashboard: Job clicked:', { jobId: job.job_id, title: job.title });
+                          onJobClick && onJobClick(job.job_id, job.title);
+                        }}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">
+                          {highlightSearchTerm(job.title, searchTerm)}
+                        </td>
+                        <td className="px-6 py-4 text-slate-600" style={{maxWidth: '300px'}}>
+                          <div className="truncate">
+                            {highlightSearchTerm(job.department, searchTerm)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <StatusBadge status={job.status} />
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.applicants}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-slate-600 font-medium">
+                          {job.actions.length > 1 ? `${job.actions[0]} | ${job.actions[1]}` : (job.actions.length === 1 ? job.actions[0] : '')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {!loading && !error && filteredJobs.length > itemsPerPage && (
+              <div className="px-6 py-6 border-t border-slate-200 bg-slate-50">
+                <div className="flex flex-col items-center space-y-4">
+                  <div className="text-sm text-slate-600 font-medium">
+                    Showing {startIndex + 1} to {Math.min(endIndex, filteredJobs.length)} of {filteredJobs.length} results
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={handlePrevPage}
+                      disabled={currentPage === 1}
+                      className={`px-4 py-2 text-sm font-medium rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition-all duration-200 ${
+                        currentPage === 1 
+                          ? 'text-gray-400 cursor-not-allowed' 
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      ← Previous
+                    </button>
+                    
+                    <div className="flex space-x-1 mx-4">
+                      {[...Array(totalPages)].map((_, index) => {
+                        const pageNumber = index + 1;
+                        const isCurrentPage = pageNumber === currentPage;
+                        
+                        // Show first page, last page, current page, and pages around current page
+                        if (
+                          pageNumber === 1 ||
+                          pageNumber === totalPages ||
+                          (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1)
+                        ) {
+                          return (
+                            <button
+                              key={pageNumber}
+                              onClick={() => handlePageChange(pageNumber)}
+                              className={`w-10 h-10 text-sm font-medium rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                                isCurrentPage
+                                  ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700'
+                                  : 'bg-transparent text-slate-700 hover:text-slate-900'
+                              }`}
+                            >
+                              {pageNumber}
+                            </button>
+                          );
+                        } else if (
+                          pageNumber === currentPage - 2 ||
+                          pageNumber === currentPage + 2
+                        ) {
+                          return (
+                            <div key={pageNumber} className="flex items-center px-2">
+                              <span className="text-slate-400 font-medium">⋯</span>
+                            </div>
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                    
+                    <button
+                      onClick={handleNextPage}
+                      disabled={currentPage === totalPages}
+                      className={`px-4 py-2 text-sm font-medium rounded-lg bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition-all duration-200 ${
+                        currentPage === totalPages 
+                          ? 'text-gray-400 cursor-not-allowed' 
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      Next →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </main>
       </div>

@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import AddApplicantModal from './AddApplicantModal.png.jsx';
+
+// API base URL - adjust this to match your FastAPI server
+const API_BASE_URL = 'http://localhost:8081';
 
 const DocumentIcon = ({ className }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -31,16 +34,44 @@ const ChevronDownIcon = ({ className }) => (
   </svg>
 );
 
-const applicantsData = [
-  { id: 1, name: 'Sarah Martinez', date: 'Oct 25, 2025', status: 'Screening', resumeText: 'View', notesText: 'Add Notes' },
-  { id: 2, name: 'James Liu', date: '', status: 'Screening', resumeText: 'View', notesText: 'View Notes' },
-  { id: 3, name: 'Rachel Green', date: '', status: 'Interview', resumeText: 'View', notesText: 'View Notes' },
-  { id: 4, name: 'Rachel Nguyen', date: '', status: 'Screening', resumeText: 'View', notesText: 'Add Notes' },
-  { id: 5, name: 'Emily Ngulyen', date: '', status: 'Screening', resumeText: 'View', notesText: 'View Notes' },
-  { id: 6, name: 'David Chen', date: '', status: 'New', resumeText: 'New', notesText: 'Add Notes' },
-  { id: 7, name: 'Sophia Lee', date: '', status: 'Rejected', resumeText: 'Haa', notesText: 'View Notes' },
-  { id: 8, name: 'Alex Brown', date: '', status: 'Offer Extended', resumeText: 'Hired', notesText: 'Add Notes' },
-];
+const LoadingSpinner = () => (
+  <div className="flex justify-center items-center p-8">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+  </div>
+);
+
+// Helper function to format date
+const formatDate = (dateString) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric' 
+  });
+};
+
+// Helper function to transform API data to component format
+const transformApplicationData = (applications, candidates) => {
+  const candidateMap = candidates.reduce((acc, candidate) => {
+    acc[candidate.candidate_id] = candidate;
+    return acc;
+  }, {});
+
+  return applications.map((app) => {
+    const candidate = candidateMap[app.candidate_id];
+    return {
+      id: app.application_id,
+      name: candidate ? `${candidate.first_name} ${candidate.last_name}` : 'Unknown',
+      date: formatDate(app.applied_at),
+      status: app.status.charAt(0).toUpperCase() + app.status.slice(1).replace('_', ' '),
+      resumeText: 'View',
+      notesText: 'Add Notes',
+      candidate_id: app.candidate_id,
+      job_id: app.job_id
+    };
+  });
+};
 
 const StatusPill = ({ status }) => {
   const baseClasses = 'px-3 py-1 text-xs font-medium rounded-full inline-block';
@@ -50,10 +81,10 @@ const StatusPill = ({ status }) => {
     case 'screening':
       specificClasses = 'bg-green-100 text-green-800';
       break;
-    case 'interview':
+    case 'interviewing':
       specificClasses = 'bg-orange-100 text-orange-800';
       break;
-    case 'new':
+    case 'applied':
       specificClasses = 'bg-blue-100 text-blue-800';
       break;
     case 'rejected':
@@ -61,6 +92,12 @@ const StatusPill = ({ status }) => {
       break;
     case 'offer extended':
       specificClasses = 'bg-red-100 text-red-800';
+      break;
+    case 'hired':
+      specificClasses = 'bg-green-200 text-green-900';
+      break;
+    case 'withdrawn':
+      specificClasses = 'bg-gray-100 text-gray-800';
       break;
     default:
       specificClasses = 'bg-gray-100 text-gray-800';
@@ -70,16 +107,131 @@ const StatusPill = ({ status }) => {
 };
 
 
-export default function JobDetailsScreen({ jobTitle = "UI/UX Senior Product Designer" }) {
+export default function JobDetailsScreen({ jobId = 1, jobTitle = "UI/UX Senior Product Designer", onBackToDashboard }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedApplicantId, setSelectedApplicantId] = useState(1); // Default to first applicant
+  const [selectedApplicantId, setSelectedApplicantId] = useState(1);
+  const [jobData, setJobData] = useState(null);
+  const [applicantsData, setApplicantsData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch job details and applications from API
+  useEffect(() => {
+    console.log('JobDetails: useEffect triggered with jobId:', jobId);
+    
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // If no jobId provided, show error
+        if (!jobId) {
+          throw new Error('No job ID provided');
+        }
+
+        console.log('JobDetails: Fetching data for job ID:', jobId);
+
+        // Fetch job details
+        const jobResponse = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+        if (!jobResponse.ok) {
+          throw new Error(`Failed to fetch job details: ${jobResponse.status}`);
+        }
+        const job = await jobResponse.json();
+
+        // Fetch all applications
+        const applicationsResponse = await fetch(`${API_BASE_URL}/applications/`);
+        if (!applicationsResponse.ok) {
+          throw new Error(`Failed to fetch applications: ${applicationsResponse.status}`);
+        }
+        const allApplications = await applicationsResponse.json();
+
+        // Filter applications for this job
+        const jobApplications = allApplications.filter(app => app.job_id === jobId);
+
+        // Fetch all candidates to get names
+        const candidatesResponse = await fetch(`${API_BASE_URL}/candidates/`);
+        if (!candidatesResponse.ok) {
+          throw new Error(`Failed to fetch candidates: ${candidatesResponse.status}`);
+        }
+        const candidates = await candidatesResponse.json();
+
+        // Transform and set data
+        setJobData(job);
+        const transformedData = transformApplicationData(jobApplications, candidates);
+        setApplicantsData(transformedData);
+        
+        // Set first applicant as selected if any exist
+        if (transformedData.length > 0) {
+          setSelectedApplicantId(transformedData[0].id);
+        }
+
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [jobId]);
 
   const openModal = () => setIsModalOpen(true);
-  const closeModal = () => setIsModalOpen(false);
+  const closeModal = () => {
+    setIsModalOpen(false);
+    // Refresh data when modal closes (in case new applicant was added)
+    const refreshData = async () => {
+      try {
+        const applicationsResponse = await fetch(`${API_BASE_URL}/applications/`);
+        const allApplications = await applicationsResponse.json();
+        const jobApplications = allApplications.filter(app => app.job_id === jobId);
+        
+        const candidatesResponse = await fetch(`${API_BASE_URL}/candidates/`);
+        const candidates = await candidatesResponse.json();
+        
+        const transformedData = transformApplicationData(jobApplications, candidates);
+        setApplicantsData(transformedData);
+      } catch (err) {
+        console.error('Error refreshing data:', err);
+      }
+    };
+    refreshData();
+  };
   
   const handleRowClick = (applicantId) => {
     setSelectedApplicantId(applicantId);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 font-sans text-gray-800">
+        <main className="container mx-auto p-8">
+          <LoadingSpinner />
+        </main>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 font-sans text-gray-800">
+        <main className="container mx-auto p-8">
+          <div className="bg-red-50 border border-red-200 rounded-md p-4">
+            <div className="flex">
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">Error loading job details</h3>
+                <div className="mt-2 text-sm text-red-700">
+                  <p>{error}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const displayJobTitle = jobData?.title || jobTitle;
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-800">
@@ -91,29 +243,22 @@ export default function JobDetailsScreen({ jobTitle = "UI/UX Senior Product Desi
           {/* Left Column: Job Details */}
           <div className="col-span-12 lg:col-span-4">
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-2xl font-bold text-gray-900 mb-6">{jobTitle}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 mb-6">{displayJobTitle}</h3>
               
               <div className="space-y-6">
                 <div>
                   <h4 className="font-semibold text-gray-700 mb-2">Description</h4>
-                  <ul className="list-disc list-inside text-gray-600 space-y-2 text-sm">
-                    <li>We are seeking a talented and experienced UI/UX tating yvut jwist biswd br Frodud Desigeer to <strong>to join ist cespnicralti ncxltlte pitnz join or growing our and growing tesm.</strong></li>
-                    <li>a tloest or lbi(t,k) UFS:I to thuls Is aint ato amsiorattsign to on citsicn. tite eg de nod tey in avot olist bito tind aer inted reast.</li>
-                  </ul>
+                  <div className="text-gray-600 text-sm whitespace-pre-wrap">
+                    {jobData?.description || 'No description available.'}
+                  </div>
                 </div>
                 <div>
-                  <h4 className="font-semibold text-gray-700 mb-2">Requirements</h4>
-                   <ul className="list-disc list-inside text-gray-600 space-y-2 text-sm">
-                    <li>5+ years of experience in UI/UX design</li>
-                    <li>Proficiency with design tools (<strong>Fijmtch, Adebe XD</strong>)</li>
-                    <li>Strong portfsillo</li>
-                    <li>Excellent communication skills</li>
-                    <li>Bachelor's degree in Design or related field</li>
+                  <h4 className="font-semibold text-gray-700 mb-2">Job Information</h4>
+                  <ul className="list-disc list-inside text-gray-600 space-y-2 text-sm">
+                    <li>Job ID: {jobData?.job_id}</li>
+                    <li>Created: {jobData?.created_at ? formatDate(jobData.created_at) : 'Unknown'}</li>
+                    <li>Created by User ID: {jobData?.created_by_user_id}</li>
                   </ul>
-                </div>
-                 <div>
-                  <h4 className="font-semibold text-gray-700 mb-2">Salary</h4>
-                  <p className="text-gray-600 text-sm">$120,000 - $166,000 Annually</p>
                 </div>
               </div>
             </div>
@@ -123,7 +268,9 @@ export default function JobDetailsScreen({ jobTitle = "UI/UX Senior Product Desi
           <div className="col-span-12 lg:col-span-8">
             <div className="bg-white rounded-lg shadow-md">
               <div className="p-6 flex justify-between items-center border-b border-gray-200">
-                <h3 className="text-xl font-bold text-gray-900">Applicants for {jobTitle}</h3>
+                <h3 className="text-xl font-bold text-gray-900">
+                  Applicants for {displayJobTitle} ({applicantsData.length})
+                </h3>
                 <button 
                   onClick={openModal}
                   className="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors"
@@ -144,51 +291,63 @@ export default function JobDetailsScreen({ jobTitle = "UI/UX Senior Product Desi
                     </tr>
                   </thead>
                   <tbody>
-                    {applicantsData.map((applicant) => {
-                      const isSelected = applicant.id === selectedApplicantId;
-                      return (
-                        <tr 
-                          key={applicant.id} 
-                          onClick={() => handleRowClick(applicant.id)}
-                          className={`
-                            border-b border-gray-200 cursor-pointer transition-all duration-200 ease-in-out
-                            ${isSelected 
-                              ? 'bg-blue-50 shadow-sm' 
-                              : 'bg-white hover:bg-gray-50 hover:shadow-sm'
-                            }
-                            hover:scale-[1.01] hover:-translate-y-0.5
-                          `}
-                        >
-                          <td className={`
-                            px-6 py-4 font-medium whitespace-nowrap transition-colors duration-200
-                            ${isSelected 
-                              ? 'text-blue-600 border-l-4 border-blue-600' 
-                              : 'text-gray-900'
-                            }
-                          `}>
-                            {applicant.name}
-                          </td>
-                          <td className="px-6 py-4 text-gray-600">{applicant.date}</td>
-                          <td className="px-6 py-4"><StatusPill status={applicant.status} /></td>
-                          <td className="px-6 py-4">
-                              <a href="#" className="flex items-center gap-2 text-gray-600 hover:text-gray-900 font-medium">
-                                  {applicant.resumeText === 'Hired' && <UserIcon className="w-4 h-4" />}
-                                  {applicant.resumeText === 'Haa' && <PlaceholderIcon className="w-4 h-4" />}
-                                  {applicant.resumeText !== 'Hired' && applicant.resumeText !== 'Haa' && <DocumentIcon className="w-4 h-4" />}
-                                  <span>{applicant.resumeText}</span>
-                              </a>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center justify-between">
-                              <a href="#" className="flex items-center gap-2 text-gray-600 hover:text-gray-900 font-medium">
-                                <ChatIcon className="w-4 h-4" />
-                                <span>{applicant.notesText}</span>
-                              </a>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {applicantsData.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
+                          <div className="flex flex-col items-center">
+                            <UserIcon className="w-12 h-12 text-gray-300 mb-4" />
+                            <p className="text-lg font-medium">No applicants yet</p>
+                            <p className="text-sm">Add the first applicant to get started!</p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      applicantsData.map((applicant) => {
+                        const isSelected = applicant.id === selectedApplicantId;
+                        return (
+                          <tr 
+                            key={applicant.id} 
+                            onClick={() => handleRowClick(applicant.id)}
+                            className={`
+                              border-b border-gray-200 cursor-pointer transition-all duration-200 ease-in-out
+                              ${isSelected 
+                                ? 'bg-blue-50 shadow-sm' 
+                                : 'bg-white hover:bg-gray-50 hover:shadow-sm'
+                              }
+                              hover:scale-[1.01] hover:-translate-y-0.5
+                            `}
+                          >
+                            <td className={`
+                              px-6 py-4 font-medium whitespace-nowrap transition-colors duration-200
+                              ${isSelected 
+                                ? 'text-blue-600 border-l-4 border-blue-600' 
+                                : 'text-gray-900'
+                              }
+                            `}>
+                              {applicant.name}
+                            </td>
+                            <td className="px-6 py-4 text-gray-600">{applicant.date}</td>
+                            <td className="px-6 py-4"><StatusPill status={applicant.status} /></td>
+                            <td className="px-6 py-4">
+                                <a href="#" className="flex items-center gap-2 text-gray-600 hover:text-gray-900 font-medium">
+                                    {applicant.resumeText === 'Hired' && <UserIcon className="w-4 h-4" />}
+                                    {applicant.resumeText === 'Haa' && <PlaceholderIcon className="w-4 h-4" />}
+                                    {applicant.resumeText !== 'Hired' && applicant.resumeText !== 'Haa' && <DocumentIcon className="w-4 h-4" />}
+                                    <span>{applicant.resumeText}</span>
+                                </a>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center justify-between">
+                                <a href="#" className="flex items-center gap-2 text-gray-600 hover:text-gray-900 font-medium">
+                                  <ChatIcon className="w-4 h-4" />
+                                  <span>{applicant.notesText}</span>
+                                </a>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -201,7 +360,11 @@ export default function JobDetailsScreen({ jobTitle = "UI/UX Senior Product Desi
       {isModalOpen && (
         <div className="fixed inset-0 backdrop-blur-sm bg-white/30 flex items-center justify-center z-50">
           <div className="relative">
-            <AddApplicantModal jobTitle={jobTitle} onClose={closeModal} />
+            <AddApplicantModal 
+              jobTitle={displayJobTitle} 
+              jobId={jobId}
+              onClose={closeModal} 
+            />
           </div>
         </div>
       )}

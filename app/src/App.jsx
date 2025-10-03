@@ -8,10 +8,26 @@ import Dashboard from './Components/Dashboard.png.jsx'
 function App() {
   const [currentPage, setCurrentPage] = useState('home')
   const [selectedJob, setSelectedJob] = useState(null)
+  const [selectedJobId, setSelectedJobId] = useState(null)
 
-  const navigateToJobDetails = (jobTitle) => {
-    setSelectedJob(jobTitle)
+  const navigateToJobDetails = (jobId, jobTitle) => {
+    // Handle both old signature (just title) and new signature (id, title)
+    if (typeof jobId === 'string' && !jobTitle) {
+      // Old signature: just job title was passed
+      setSelectedJob(jobId)
+      setSelectedJobId(null)
+    } else {
+      // New signature: jobId and jobTitle
+      setSelectedJobId(jobId)
+      setSelectedJob(jobTitle || `Job ${jobId}`)
+    }
     setCurrentPage('jobdetails')
+  }
+
+  const navigateBackToDashboard = () => {
+    setCurrentPage('home')
+    setSelectedJob(null)
+    setSelectedJobId(null)
   }
 
   const renderPage = () => {
@@ -19,7 +35,13 @@ function App() {
       case 'about':
         return <AboutUs />
       case 'jobdetails':
-        return <JobDetailsScreen jobTitle={selectedJob} />
+        return (
+          <JobDetailsScreen 
+            jobId={selectedJobId} 
+            jobTitle={selectedJob}
+            onBackToDashboard={navigateBackToDashboard}
+          />
+        )
       default:
         return <Dashboard onJobClick={navigateToJobDetails} />
     }
