@@ -296,7 +296,7 @@ pyrightconfig.json
 [Ll]ib
 [Ll]ib64
 [Ll]ocal
-[Ss]cripts
+# [Ss]cripts
 pyvenv.cfg
 pip-selfcheck.json
 
@@ -322,5 +322,7 @@ pip-selfcheck.json
 # Custom
 Notes.txt
 artifacts/*
+!app/node_modules/
+!node_modules/
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,pycharm,dotenv,venv,python
