@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Test</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // API configuration
+        const API_BASE_URL = 'http://localhost:8081';
+
+        // Icon components
+        const SearchIcon = (props) => (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+        );
+
+        const StatusBadge = ({ status }) => {
+            const baseClasses = "inline-flex items-center px-3 py-1 rounded-full text-xs font-medium capitalize";
+            switch (status.toLowerCase()) {
+                case 'open':
+                    return <span className={`${baseClasses} bg-green-100 text-green-800`}>{status}</span>;
+                case 'draft':
+                    return <span className={`${baseClasses} bg-blue-100 text-blue-800`}>{status}</span>;
+                case 'closed':
+                    return <span className={`${baseClasses} bg-red-100 text-red-800`}>{status}</span>;
+                case 'interviewing':
+                    return <span className={`${baseClasses} bg-yellow-100 text-yellow-800`}>{status}</span>;
+                default:
+                    return <span className="text-gray-600 text-sm capitalize">{status}</span>;
+            }
+        };
+
+        // API utility functions
+        const fetchJobs = async () => {
+            try {
+                const response = await fetch(`${API_BASE_URL}/jobs/`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching jobs:', error);
+                throw error;
+            }
+        };
+
+        const fetchApplicationsForJob = async (jobId) => {
+            try {
+                const response = await fetch(`${API_BASE_URL}/applications/`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const applications = await response.json();
+                return applications.filter(app => app.job_id === jobId);
+            } catch (error) {
+                console.error('Error fetching applications:', error);
+                return [];
+            }
+        };
+
+        // Transform backend data to match frontend expectations
+        const transformJobData = (jobs, applicationsData) => {
+            return jobs.map(job => {
+                const applications = applicationsData[job.job_id] || [];
+                const applicantCount = applications.length;
+                
+                // Determine status based on applications
+                let status = 'Open';
+                if (applicantCount === 0) {
+                    status = 'Open';
+                } else if (applications.some(app => app.status === 'interviewing')) {
+                    status = 'Interviewing';
+                } else if (applications.some(app => app.status === 'offer_extended')) {
+                    status = 'Offer Extended';
+                }
+
+                return {
+                    job_id: job.job_id,
+                    title: job.title,
+                    department: job.description || 'No description',
+                    status: status,
+                    applicants: applicantCount,
+                    actions: applicantCount > 0 ? ['View', 'Edit'] : ['View']
+                };
+            });
+        };
+
+        function Dashboard({ onJobClick }) {
+            const [jobs, setJobs] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+
+            useEffect(() => {
+                const loadData = async () => {
+                    try {
+                        setLoading(true);
+                        setError(null);
+                        
+                        // Fetch jobs and applications
+                        const jobsData = await fetchJobs();
+                        
+                        // Fetch applications for each job
+                        const applicationsData = {};
+                        await Promise.all(
+                            jobsData.map(async (job) => {
+                                applicationsData[job.job_id] = await fetchApplicationsForJob(job.job_id);
+                            })
+                        );
+                        
+                        // Transform data for the UI
+                        const transformedJobs = transformJobData(jobsData, applicationsData);
+                        setJobs(transformedJobs);
+                    } catch (err) {
+                        setError(err.message);
+                        console.error('Failed to load dashboard data:', err);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+
+                loadData();
+            }, []);
+
+            return (
+                <div className="bg-slate-100 min-h-screen flex justify-center font-sans">
+                    <div className="w-full max-w-7xl bg-white rounded-2xl shadow-lg flex min-h-[800px]">
+                        <main className="flex-1 p-8">
+                            {/* Header */}
+                            <div className="mb-6">
+                                <h1 className="text-3xl font-bold text-slate-900">Recruitment Dashboard</h1>
+                                <p className="text-slate-600 mt-2">Manage job postings and track applications</p>
+                            </div>
+
+                            {/* Search */}
+                            <div className="flex justify-between items-center my-6">
+                                <div className="relative w-full max-w-sm">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <SearchIcon className="text-slate-400" />
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Search for jobs..."
+                                        className="w-full bg-white border border-slate-300 rounded-lg py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Job Postings Table */}
+                            <div className="mt-4 bg-white rounded-xl border border-slate-200">
+                                <h2 className="text-xl font-bold text-slate-800 p-6">Current Job Postings</h2>
+                                
+                                {loading && (
+                                    <div className="flex justify-center items-center p-8">
+                                        <div className="text-slate-600">Loading jobs...</div>
+                                    </div>
+                                )}
+                                
+                                {error && (
+                                    <div className="mx-6 mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+                                        <strong>Error:</strong> {error}
+                                        <div className="text-sm mt-2">
+                                            Make sure the backend server is running on http://localhost:8081
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                {!loading && !error && jobs.length === 0 && (
+                                    <div className="p-8 text-center text-slate-600">
+                                        No jobs found. Create your first job posting!
+                                    </div>
+                                )}
+                                
+                                {!loading && !error && jobs.length > 0 && (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-slate-50 border-b border-slate-200">
+                                                <tr>
+                                                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Job Title</th>
+                                                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Description</th>
+                                                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                                                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Applicants</th>
+                                                    <th scope="col" className="px-6 py-3 font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-200">
+                                                {jobs.map((job, index) => (
+                                                    <tr 
+                                                        key={job.job_id || index} 
+                                                        className="hover:bg-slate-50 cursor-pointer transition-colors"
+                                                        onClick={() => onJobClick && onJobClick(job.job_id)}
+                                                    >
+                                                        <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">{job.title}</td>
+                                                        <td className="px-6 py-4 text-slate-600" style={{maxWidth: '300px'}}>
+                                                            <div className="truncate">{job.department}</div>
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <StatusBadge status={job.status} />
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-slate-600">{job.applicants}</td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-slate-600 font-medium">
+                                                            {job.actions.length > 1 ? `${job.actions[0]} | ${job.actions[1]}` : (job.actions.length === 1 ? job.actions[0] : '')}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            const handleJobClick = (jobId) => {
+                console.log('Job clicked:', jobId);
+                alert(`Job ${jobId} clicked! This would navigate to job details.`);
+            };
+
+            return <Dashboard onJobClick={handleJobClick} />;
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
