@@ -13,6 +13,12 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+#root {
+  padding: 0;
+  margin-left: 15%;
+  width: 100%;
+}
+
 a {
   font-weight: 500;
   color: #646cff;
@@ -28,6 +34,7 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  background-color: #213547;
 }
 
 h1 {
@@ -42,12 +49,12 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  background-color: #464ef0;
   cursor: pointer;
   transition: border-color 0.25s;
 }
 button:hover {
-  border-color: #646cff;
+  background-color: #7379ee;
 }
 button:focus,
 button:focus-visible {
@@ -62,7 +69,53 @@ button:focus-visible {
   a:hover {
     color: #747bff;
   }
-  button {
-    background-color: #f9f9f9;
+}
+
+/* Navigation Link Styles - Override default button styling */
+.nav-link {
+  /* Reset button styles */
+  background: none !important;
+  border: none !important;
+  padding: 0.5rem 0 !important;
+  margin: 0 !important;
+  
+  /* Link-like appearance */
+  font-family: inherit !important;
+  cursor: pointer !important;
+  text-decoration: none !important;
+  
+  /* Remove default button effects */
+  box-shadow: none !important;
+  outline: none !important;
+  border-radius: 0 !important;
+  
+  /* Smooth transitions */
+  transition: color 0.2s ease-in-out !important;
+}
+
+.nav-link:hover {
+  background: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.nav-link:focus,
+.nav-link:focus-visible {
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: 2px !important;
+  border-radius: 4px !important;
+}
+
+/* Active state underline animation */
+.nav-link span {
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
   }
 }
