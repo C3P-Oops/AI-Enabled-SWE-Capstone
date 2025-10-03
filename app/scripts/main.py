@@ -21,12 +21,12 @@ Key Features:
 from __future__ import annotations
 
 import uvicorn
-from contextlib import asynccontextmanager
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from sqlalchemy import (
     create_engine,
@@ -41,13 +41,10 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 # --- Database Setup ---
 
 # Define the database URL for a local SQLite database file.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./recruitment_app.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./app/recruitment_app.db"
 
 # Create the SQLAlchemy engine.
 engine = create_engine(
@@ -249,43 +246,27 @@ def get_db():
         db.close()
 
 
-# --- Lifespan Event Handler ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Handle startup and shutdown events."""
-    # Startup: Create all database tables
-    Base.metadata.create_all(bind=engine)
-    yield
-    # Shutdown: Add any cleanup code here if needed
-
-
 # --- Application Setup ---
 app = FastAPI(
     title="Hiring System API",
     description="An API for managing a recruitment process, using FastAPI and SQLAlchemy.",
     version="2.0.0",
-    lifespan=lifespan,
 )
 
-# Configure CORS to allow requests from the React frontend.
-origins = [
-    "http://localhost:3000",  # Create React App default
-    "http://localhost:5173",  # Vite default
-    "http://localhost:5174",  # Vite alternative
-    "localhost:3000",
-    "localhost:5173", 
-    "localhost:5174",
-    "*"  # Allow all origins for development (remove in production)
-]
-
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # Allow requests from these origins
-    allow_credentials=True,      # Allow cookies
-    allow_methods=["*"],         # Allow all methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],         # Allow all headers
+    allow_origins=["http://localhost:5173"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def on_startup():
+    """Creates all database tables on application startup."""
+    Base.metadata.create_all(bind=engine)
 
 
 # --- Enums for CHECK Constraints ---
@@ -452,7 +433,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> sqa_User:
     """
     Retrieves a single user by their ID.
     """
-    db_user = db.get(sqa_User, user_id)
+    db_user = db.query(sqa_User).get(user_id)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found")
     return db_user
@@ -463,7 +444,7 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     """
     Updates an existing user's details.
     """
-    db_user = db.get(sqa_User, user_id)
+    db_user = db.query(sqa_User).get(user_id)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found")
 
@@ -490,7 +471,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     Deletes a user. Fails if the user is linked to jobs, feedback, or
     decisions due to RESTRICT constraints.
     """
-    db_user = db.get(sqa_User, user_id)
+    db_user = db.query(sqa_User).get(user_id)
     if not db_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found")
     try:
@@ -538,7 +519,7 @@ def get_candidate(candidate_id: int, db: Session = Depends(get_db)) -> sqa_Candi
     """
     Retrieves a single candidate by their ID.
     """
-    db_candidate = db.get(sqa_Candidate, candidate_id)
+    db_candidate = db.query(sqa_Candidate).get(candidate_id)
     if not db_candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {candidate_id} not found")
     return db_candidate
@@ -549,7 +530,7 @@ def update_candidate(candidate_id: int, candidate_update: CandidateUpdate, db: S
     """
     Updates an existing candidate's details.
     """
-    db_candidate = db.get(sqa_Candidate, candidate_id)
+    db_candidate = db.query(sqa_Candidate).get(candidate_id)
     if not db_candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {candidate_id} not found")
 
@@ -576,7 +557,7 @@ def delete_candidate(candidate_id: int, db: Session = Depends(get_db)):
     Deletes a candidate and all their associated data (applications, documents, etc.)
     due to CASCADE constraints.
     """
-    db_candidate = db.get(sqa_Candidate, candidate_id)
+    db_candidate = db.query(sqa_Candidate).get(candidate_id)
     if not db_candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {candidate_id} not found")
     db.delete(db_candidate)
@@ -591,7 +572,7 @@ def create_job(job: JobCreate, db: Session = Depends(get_db)) -> sqa_Job:
     """
     Creates a new job posting. The creating user must exist.
     """
-    creator = db.get(sqa_User, job.created_by_user_id)
+    creator = db.query(sqa_User).get(job.created_by_user_id)
     if not creator:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -618,7 +599,7 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> sqa_Job:
     """
     Retrieves a single job by its ID.
     """
-    db_job = db.get(sqa_Job, job_id)
+    db_job = db.query(sqa_Job).get(job_id)
     if not db_job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with ID {job_id} not found")
     return db_job
@@ -632,9 +613,9 @@ def create_application(application: ApplicationCreate, db: Session = Depends(get
     Creates a new job application. A candidate can only apply for a given job once.
     """
     # Check if foreign keys exist
-    if not db.get(sqa_Job, application.job_id):
+    if not db.query(sqa_Job).get(application.job_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job with ID {application.job_id} not found")
-    if not db.get(sqa_Candidate, application.candidate_id):
+    if not db.query(sqa_Candidate).get(application.candidate_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate with ID {application.candidate_id} not found")
 
     new_application = sqa_Application(**application.model_dump())
@@ -664,7 +645,7 @@ def get_application(application_id: int, db: Session = Depends(get_db)) -> sqa_A
     """
     Retrieves a single application by its ID.
     """
-    db_application = db.get(sqa_Application, application_id)
+    db_application = db.query(sqa_Application).get(application_id)
     if not db_application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
     return db_application
@@ -675,7 +656,7 @@ def update_application(application_id: int, app_update: ApplicationUpdate, db: S
     """
     Updates the status of an application.
     """
-    db_application = db.get(sqa_Application, application_id)
+    db_application = db.query(sqa_Application).get(application_id)
     if not db_application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
 
@@ -694,7 +675,7 @@ def delete_application(application_id: int, db: Session = Depends(get_db)):
     Deletes an application and all its associated data (documents, interviews, etc.)
     due to CASCADE constraints.
     """
-    db_application = db.get(sqa_Application, application_id)
+    db_application = db.query(sqa_Application).get(application_id)
     if not db_application:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Application with ID {application_id} not found")
 
